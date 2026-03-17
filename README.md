@@ -12,6 +12,8 @@ That means the machine running the build needs:
 - network access on the first run so `npx` can fetch `@mermaid-js/mermaid-cli` if it is not already cached
 - any system dependencies required by Mermaid CLI's headless browser on that platform
 
+For locked-down Linux CI environments, you may also need to disable Chromium sandboxing. The demo site does this with `no_sandbox: !ENV [MKDOCS_MERMAID_IMAGES_NO_SANDBOX, false]`, and the GitHub Actions workflow sets that environment variable only in CI.
+
 ## Demo site
 
 A minimal demo site lives in [examples/demo](/Users/peter.daly/WS/pete/mkdocs-mermaid-images/examples/demo). It has a single page with a few Mermaid diagrams so you can verify the plugin renders them into image assets during the build.

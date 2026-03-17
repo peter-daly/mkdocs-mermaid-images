@@ -128,6 +128,43 @@ B --> C
     assert len(plugin._page_replacements["index.md"]) == 3
 
 
+def test_on_files_passes_no_sandbox_puppeteer_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = build_config(tmp_path)
+    plugin = MermaidImagesPlugin()
+    errors, warnings = plugin.load_config({"no_sandbox": True})
+    assert errors == []
+    assert warnings == []
+    plugin.on_config(config)
+
+    markdown = """```mermaid
+graph TD
+A --> B
+```
+"""
+    doc_file = build_doc_file(config, "index.md", markdown)
+    files = Files([doc_file])
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], check: bool, capture_output: bool, text: bool) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        config_path = Path(command[command.index("-p") + 1])
+        config_data = config_path.read_text(encoding="utf-8")
+        assert "--no-sandbox" in config_data
+        assert "--disable-setuid-sandbox" in config_data
+        output_path = Path(command[command.index("-o") + 1])
+        output_path.write_bytes(b"png")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("mkdocs_mermaid_images.plugin.subprocess.run", fake_run)
+
+    plugin.on_files(files, config=config)
+
+    assert len(calls) == 1
+    assert "-p" in calls[0]
+
+
 def test_on_page_markdown_replaces_blocks_with_relative_images(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

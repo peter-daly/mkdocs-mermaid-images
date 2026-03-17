@@ -4,4 +4,5 @@ site_dir: site
 
 plugins:
   - search
-  - mermaid-images
+  - mermaid-images:
+      no_sandbox: !ENV [MKDOCS_MERMAID_IMAGES_NO_SANDBOX, false]

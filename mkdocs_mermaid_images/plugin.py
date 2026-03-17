@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import shutil
 import subprocess
@@ -9,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from mkdocs.config import base, config_options as c
 from mkdocs.exceptions import PluginError
 from mkdocs.plugins import BasePlugin
 from mkdocs.structure.files import File, Files
@@ -43,17 +45,25 @@ class Replacement:
     asset_src_uri: str
 
 
-class MermaidImagesPlugin(BasePlugin):
+class MermaidImagesConfig(base.Config):
+    puppeteer_config_file = c.Optional(c.File(exists=True))
+    no_sandbox = c.Type(bool, default=False)
+
+
+class MermaidImagesPlugin(BasePlugin[MermaidImagesConfig]):
     def __init__(self) -> None:
+        self.config = MermaidImagesConfig()
         self._generated_files: dict[str, File] = {}
         self._page_replacements: dict[str, list[Replacement]] = {}
         self._temp_dir: Path | None = None
+        self._puppeteer_config_path: Path | None = None
 
     def on_config(self, config: MkDocsConfig) -> MkDocsConfig:
         self._cleanup_temp_dir()
         self._generated_files = {}
         self._page_replacements = {}
         self._temp_dir = Path(tempfile.mkdtemp(prefix="mkdocs-mermaid-images-"))
+        self._puppeteer_config_path = None
         return config
 
     def on_files(self, files: Files, *, config: MkDocsConfig) -> Files:
@@ -144,11 +154,11 @@ class MermaidImagesPlugin(BasePlugin):
             "npx",
             "-y",
             "@mermaid-js/mermaid-cli",
-            "-i",
-            str(input_path),
-            "-o",
-            str(output_path),
         ]
+        puppeteer_config_path = self._resolve_puppeteer_config_path()
+        if puppeteer_config_path is not None:
+            command.extend(["-p", str(puppeteer_config_path)])
+        command.extend(["-i", str(input_path), "-o", str(output_path)])
 
         try:
             subprocess.run(command, check=True, capture_output=True, text=True)
@@ -165,11 +175,47 @@ class MermaidImagesPlugin(BasePlugin):
             self._temp_dir = Path(tempfile.mkdtemp(prefix="mkdocs-mermaid-images-"))
         return self._temp_dir
 
+    def _resolve_puppeteer_config_path(self) -> Path | None:
+        configured_path = self.config.puppeteer_config_file
+        if configured_path is None and not self.config.no_sandbox:
+            return None
+
+        if not self.config.no_sandbox:
+            assert configured_path is not None
+            return Path(configured_path)
+
+        if self._puppeteer_config_path is not None:
+            return self._puppeteer_config_path
+
+        launch_config: dict[str, object] = {}
+        if configured_path is not None:
+            with Path(configured_path).open(encoding="utf-8") as config_file:
+                loaded_config = json.load(config_file)
+            if not isinstance(loaded_config, dict):
+                raise PluginError("Mermaid puppeteer config file must contain a JSON object.")
+            launch_config = loaded_config
+
+        args = launch_config.get("args", [])
+        if not isinstance(args, list) or any(not isinstance(arg, str) for arg in args):
+            raise PluginError("Mermaid puppeteer config 'args' must be a list of strings.")
+
+        merged_args = list(args)
+        for arg in ("--no-sandbox", "--disable-setuid-sandbox"):
+            if arg not in merged_args:
+                merged_args.append(arg)
+        launch_config["args"] = merged_args
+
+        config_path = self._ensure_temp_dir() / "puppeteer-config.json"
+        config_path.write_text(json.dumps(launch_config), encoding="utf-8")
+        self._puppeteer_config_path = config_path
+        return config_path
+
     def _cleanup_temp_dir(self) -> None:
         if self._temp_dir is None:
             return
         shutil.rmtree(self._temp_dir, ignore_errors=True)
         self._temp_dir = None
+        self._puppeteer_config_path = None
 
 
 def _extract_mermaid_blocks(markdown: str) -> list[MermaidBlock]:

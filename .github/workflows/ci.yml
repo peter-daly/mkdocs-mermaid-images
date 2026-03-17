@@ -31,6 +31,8 @@ jobs:
         run: uv sync --group dev
 
       - name: Run CI checks
+        env:
+          MKDOCS_MERMAID_IMAGES_NO_SANDBOX: "true"
         run: make ci
 
   check-version:
