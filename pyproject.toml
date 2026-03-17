@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mkdocs-mermaid-images"
-version = "0.1.0"
+version = "0.2.0"
 description = "MkDocs plugin that renders Mermaid fences to hashed PNG assets"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,7 +22,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/peter-daly/mkdocs-mermaid-images"
 Repository = "https://github.com/peter-daly/mkdocs-mermaid-images"
-Documentation = "https://peter-daly.github.io/mkdocs-mermaid-images/"
+Documentation = "https://github.com/peter-daly/mkdocs-mermaid-images#README.md"
 
 [project.entry-points."mkdocs.plugins"]
 mermaid-images = "mkdocs_mermaid_images.plugin:MermaidImagesPlugin"

@@ -2,6 +2,18 @@
 
 MkDocs plugin that replaces Mermaid code fences with generated PNG images.
 
+## Basic setup
+
+Add the plugin to your `mkdocs.yml`:
+
+```yaml
+site_name: My Docs
+
+plugins:
+  - search
+  - mermaid-images
+```
+
 ## Requirements
 
 You do not need to install `@mermaid-js/mermaid-cli` globally. The plugin runs it through `npx` when MkDocs builds the site.
@@ -14,9 +26,69 @@ That means the machine running the build needs:
 
 For locked-down Linux CI environments, you may also need to disable Chromium sandboxing. The demo site does this with `no_sandbox: !ENV [MKDOCS_MERMAID_IMAGES_NO_SANDBOX, false]`, and the GitHub Actions workflow sets that environment variable only in CI.
 
+## Examples
+
+Use either `mermaid` or `mermaidjs` fenced code blocks in Markdown:
+
+````md
+# Architecture
+
+```mermaid
+flowchart TD
+    User --> MkDocs
+    MkDocs --> Plugin
+    Plugin --> PNG[Generated PNG]
+```
+````
+
+The built page will contain a normal Markdown image link instead of the code fence, and the generated file will be written under `assets/mermaid/`.
+
+Repeated diagrams are rendered once and reused by content hash:
+
+````md
+```mermaid
+graph TD
+A --> B
+```
+
+```mermaid
+graph TD
+A --> B
+```
+````
+
+Both fences will point at the same generated PNG.
+
+You can also use `mermaidjs` fences:
+
+```md
+~~~mermaidjs
+sequenceDiagram
+    participant User
+    participant Site
+    User->>Site: Open docs
+~~~
+```
+
+For CI environments that require Chromium sandboxing to be disabled:
+
+```yaml
+plugins:
+  - mermaid-images:
+      no_sandbox: !ENV [MKDOCS_MERMAID_IMAGES_NO_SANDBOX, false]
+```
+
+If you already have a Puppeteer config file, you can pass it through to Mermaid CLI:
+
+```yaml
+plugins:
+  - mermaid-images:
+      puppeteer_config_file: puppeteer-config.json
+```
+
 ## Demo site
 
-A minimal demo site lives in [examples/demo](/Users/peter.daly/WS/pete/mkdocs-mermaid-images/examples/demo). It has a single page with a few Mermaid diagrams so you can verify the plugin renders them into image assets during the build.
+A minimal demo site lives in [examples/demo](https://github.com/peter-daly/mkdocs-mermaid-images/tree/main/examples/demo). It has a single page with a few Mermaid diagrams so you can verify the plugin renders them into image assets during the build.
 
 Run it from the repository root:
 
