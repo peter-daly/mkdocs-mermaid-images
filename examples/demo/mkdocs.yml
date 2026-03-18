@@ -5,4 +5,21 @@ site_dir: site
 plugins:
   - search
   - mermaid-images:
-      no_sandbox: !ENV [MKDOCS_MERMAID_IMAGES_NO_SANDBOX, false]
+      # npx renderer (default)
+      # renderer: npx
+      # theme: default
+      # puppeteer_config_file: puppeteer-config.json
+      # no_sandbox: !ENV [MKDOCS_MERMAID_IMAGES_NO_SANDBOX, false]
+
+      # docker renderer
+      # renderer: docker
+      # theme: dark
+      # docker_image: ghcr.io/mermaid-js/mermaid-cli/mermaid-cli
+      # puppeteer_config_file: puppeteer-config.json
+      # no_sandbox: !ENV [MKDOCS_MERMAID_IMAGES_NO_SANDBOX, false]
+
+      # api renderer
+      renderer: api
+      api_base_url: https://mermaid.ink
+      api_timeout: 30
+      theme: forest

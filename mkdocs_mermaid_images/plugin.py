@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import tempfile
+import urllib.error
+import urllib.request
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,6 +29,8 @@ if TYPE_CHECKING:
 MERMAID_INFO_STRINGS = {"mermaid", "mermaidjs"}
 MERMAID_ASSET_DIR = "assets/mermaid"
 MERMAID_ALT_TEXT = "Mermaid diagram"
+MERMAID_API_USER_AGENT = "mkdocs-mermaid-images"
+MERMAID_DOCKER_IMAGE = "ghcr.io/mermaid-js/mermaid-cli/mermaid-cli"
 FENCE_START_RE = re.compile(r"^(?P<indent>[ ]{0,3})(?P<fence>`{3,}|~{3,})[ \t]*(?P<info>[^\n]*)$")
 
 
@@ -46,6 +53,11 @@ class Replacement:
 
 
 class MermaidImagesConfig(base.Config):
+    renderer = c.Choice(("npx", "docker", "api"), default="npx")
+    theme = c.Choice(("default", "neutral", "dark", "forest"), default="default")
+    docker_image = c.Type(str, default=MERMAID_DOCKER_IMAGE)
+    api_base_url = c.Type(str, default="https://mermaid.ink")
+    api_timeout = c.Type(int, default=30)
     puppeteer_config_file = c.Optional(c.File(exists=True))
     no_sandbox = c.Type(bool, default=False)
 
@@ -150,39 +162,114 @@ class MermaidImagesPlugin(BasePlugin[MermaidImagesConfig]):
         output_path = temp_dir / f"{content_hash}.png"
         input_path.write_text(block_content, encoding="utf-8")
 
-        command = [
-            "npx",
-            "-y",
-            "@mermaid-js/mermaid-cli",
-        ]
-        puppeteer_config_path = self._resolve_puppeteer_config_path()
-        if puppeteer_config_path is not None:
-            command.extend(["-p", str(puppeteer_config_path)])
-        command.extend(["-i", str(input_path), "-o", str(output_path)])
-
-        try:
-            subprocess.run(command, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as exc:
-            stderr = (exc.stderr or exc.stdout or "").strip()
-            detail = f": {stderr}" if stderr else "."
-            raise PluginError(f"Failed to render Mermaid diagram in '{source_path}'{detail}") from exc
+        if self.config.renderer == "npx":
+            self._render_with_npx(input_path=input_path, output_path=output_path, source_path=source_path)
+        elif self.config.renderer == "docker":
+            self._render_with_docker(input_path=input_path, output_path=output_path, source_path=source_path)
+        else:
+            self._render_with_api(block_content=block_content, output_path=output_path, source_path=source_path)
 
         asset_src_uri = f"{MERMAID_ASSET_DIR}/{content_hash}.png"
         return File.generated(config, asset_src_uri, abs_src_path=str(output_path))
+
+    def _render_with_npx(self, *, input_path: Path, output_path: Path, source_path: str) -> None:
+        command = [
+            "npx",
+            "-y",
+            "-p",
+            "@mermaid-js/mermaid-cli",
+            "mmdc",
+        ]
+        puppeteer_config_path = self._resolve_cli_puppeteer_config_path()
+        if puppeteer_config_path is not None:
+            command.extend(["-p", str(puppeteer_config_path)])
+        command.extend(["-t", self.config.theme, "-i", str(input_path), "-o", str(output_path)])
+
+        self._run_render_command(command, renderer="npx", source_path=source_path)
+
+    def _render_with_docker(self, *, input_path: Path, output_path: Path, source_path: str) -> None:
+        temp_dir = self._ensure_temp_dir()
+        container_input_path = f"/data/{input_path.name}"
+        container_output_path = f"/data/{output_path.name}"
+
+        command = [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{temp_dir}:/data",
+            "-w",
+            "/data",
+        ]
+        if os.name != "nt" and hasattr(os, "getuid") and hasattr(os, "getgid"):
+            command.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
+        command.append(self.config.docker_image)
+        command.append("mmdc")
+
+        puppeteer_config_path = self._resolve_cli_puppeteer_config_path()
+        if puppeteer_config_path is not None:
+            command.extend(["-p", f"/data/{puppeteer_config_path.name}"])
+
+        command.extend(["-t", self.config.theme, "-i", container_input_path, "-o", container_output_path])
+        self._run_render_command(command, renderer="docker", source_path=source_path)
+
+    def _render_with_api(self, *, block_content: str, output_path: Path, source_path: str) -> None:
+        state = json.dumps(
+            {
+                "code": block_content,
+                "mermaid": {},
+            },
+            separators=(",", ":"),
+        )
+        compressed_state = zlib.compress(state.encode("utf-8"), level=9)
+        encoded_state = base64.urlsafe_b64encode(compressed_state).decode("ascii").rstrip("=")
+        api_url = (
+            f"{self.config.api_base_url.rstrip('/')}/img/pako:{encoded_state}"
+            f"?type=png&theme={self.config.theme}"
+        )
+        request = urllib.request.Request(
+            api_url,
+            headers={"User-Agent": MERMAID_API_USER_AGENT},
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=self.config.api_timeout) as response:
+                content_type = response.headers.get_content_type()
+                if content_type != "image/png":
+                    raise PluginError(
+                        f"Failed to render Mermaid diagram in '{source_path}' via api renderer: "
+                        f"expected image/png response but received '{content_type}'."
+                    )
+                output_path.write_bytes(response.read())
+        except PluginError:
+            raise
+        except urllib.error.HTTPError as exc:
+            response_body = b""
+            if exc.fp is not None:
+                response_body = exc.read()
+            detail = (response_body.decode("utf-8", errors="replace") or str(exc)).strip()
+            self._raise_render_error(renderer="api", source_path=source_path, detail=detail, exc=exc)
+        except urllib.error.URLError as exc:
+            self._raise_render_error(renderer="api", source_path=source_path, detail=str(exc.reason), exc=exc)
+        except TimeoutError as exc:
+            self._raise_render_error(renderer="api", source_path=source_path, detail="request timed out", exc=exc)
+
+    def _run_render_command(self, command: list[str], *, renderer: str, source_path: str) -> None:
+        try:
+            subprocess.run(command, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or exc.stdout or "").strip() or "renderer command failed"
+            self._raise_render_error(renderer=renderer, source_path=source_path, detail=stderr, exc=exc)
 
     def _ensure_temp_dir(self) -> Path:
         if self._temp_dir is None:
             self._temp_dir = Path(tempfile.mkdtemp(prefix="mkdocs-mermaid-images-"))
         return self._temp_dir
 
-    def _resolve_puppeteer_config_path(self) -> Path | None:
+    def _resolve_cli_puppeteer_config_path(self) -> Path | None:
         configured_path = self.config.puppeteer_config_file
         if configured_path is None and not self.config.no_sandbox:
             return None
-
-        if not self.config.no_sandbox:
-            assert configured_path is not None
-            return Path(configured_path)
 
         if self._puppeteer_config_path is not None:
             return self._puppeteer_config_path
@@ -200,15 +287,23 @@ class MermaidImagesPlugin(BasePlugin[MermaidImagesConfig]):
             raise PluginError("Mermaid puppeteer config 'args' must be a list of strings.")
 
         merged_args = list(args)
-        for arg in ("--no-sandbox", "--disable-setuid-sandbox"):
-            if arg not in merged_args:
-                merged_args.append(arg)
-        launch_config["args"] = merged_args
+        if self.config.no_sandbox:
+            for arg in ("--no-sandbox", "--disable-setuid-sandbox"):
+                if arg not in merged_args:
+                    merged_args.append(arg)
+        if merged_args or "args" in launch_config:
+            launch_config["args"] = merged_args
 
         config_path = self._ensure_temp_dir() / "puppeteer-config.json"
         config_path.write_text(json.dumps(launch_config), encoding="utf-8")
         self._puppeteer_config_path = config_path
         return config_path
+
+    def _raise_render_error(self, *, renderer: str, source_path: str, detail: str, exc: Exception) -> None:
+        suffix = f": {detail}" if detail else "."
+        raise PluginError(
+            f"Failed to render Mermaid diagram in '{source_path}' via {renderer} renderer{suffix}"
+        ) from exc
 
     def _cleanup_temp_dir(self) -> None:
         if self._temp_dir is None:
