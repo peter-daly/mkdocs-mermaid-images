@@ -24,7 +24,7 @@ jobs:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       - name: Extract version from pyproject.toml
         run: echo "PACKAGE_VERSION=$(uv version --short)" >> "$GITHUB_ENV"
