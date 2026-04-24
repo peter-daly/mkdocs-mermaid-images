@@ -161,7 +161,119 @@ plugins:
 
 Supported values are `default`, `neutral`, `dark`, and `forest`.
 
-This plugin-level theme is site-wide. Per-diagram Mermaid-native theme configuration remains outside the plugin's config surface.
+This plugin-level theme is site-wide and takes precedence over any `theme` value in a Mermaid config file.
+
+### Mermaid config file
+
+Pass Mermaid-native JSON configuration through to the renderer:
+
+```yaml
+plugins:
+  - mermaid-images:
+      mermaid_config_file: mermaid-config.json
+```
+
+Example `mermaid-config.json`:
+
+```json
+{
+  "themeVariables": {
+    "primaryColor": "#f4f7fb",
+    "primaryTextColor": "#172033"
+  },
+  "flowchart": {
+    "curve": "basis",
+    "useMaxWidth": false
+  },
+  "sequence": {
+    "showSequenceNumbers": true
+  }
+}
+```
+
+`mermaid_config_file` must point to a JSON object. It applies to all diagrams. The plugin's `theme` option still wins over any `theme` value in this file.
+
+### Image size and scale
+
+Wide diagrams can become hard to read if the PNG renderer uses its default viewport. Increase the generated PNG dimensions for those sites:
+
+```yaml
+plugins:
+  - mermaid-images:
+      image_width: 2400
+      image_scale: 2
+```
+
+`image_width` and `image_height` are optional positive integers. `image_scale` accepts a number from `1` to `3` and defaults to `1`.
+
+You can override these values for an individual diagram by adding short attributes to the Mermaid fence info string:
+
+````md
+```mermaid width=2400 scale=2
+flowchart LR
+    A --> B
+```
+````
+
+Supported per-diagram attributes are `width`, `height`, and `scale`. They override `image_width`, `image_height`, and `image_scale` for that diagram only. Identical Mermaid source rendered with different image options is written as separate PNG assets.
+
+For `npx` and `docker`, these values are passed to Mermaid CLI as `--width`, `--height`, and `--scale`. For `api`, they are sent as mermaid.ink `width`, `height`, and `scale` query parameters. The API renderer requires a width or height, from either the plugin config or the diagram fence, when the effective scale is above `1`.
+
+### Alt text and captions
+
+Set site-wide image alt text:
+
+```yaml
+plugins:
+  - mermaid-images:
+      alt_text: Mermaid diagram
+```
+
+Override alt text or add a caption for an individual diagram:
+
+````md
+```mermaid alt="Checkout sequence" caption="Checkout service flow"
+sequenceDiagram
+    User->>Service: Checkout
+```
+````
+
+Captions are treated as plain text and escaped before being written to HTML.
+
+### Background color
+
+Set a global generated image background:
+
+```yaml
+plugins:
+  - mermaid-images:
+      background_color: transparent
+```
+
+Override it for an individual diagram:
+
+````md
+```mermaid background=transparent
+flowchart TD
+    A --> B
+```
+````
+
+For `npx` and `docker`, this is passed to Mermaid CLI as `--backgroundColor`. For `api`, it is sent as the mermaid.ink `bgColor` query parameter.
+
+### API retries
+
+The API renderer retries transient failures by default:
+
+```yaml
+plugins:
+  - mermaid-images:
+      renderer: api
+      api_retries: 2
+      api_retry_backoff: 0.5
+```
+
+Retries apply to HTTP `429`, `500`, `502`, `503`, and `504`, plus timeout and network errors. Mermaid syntax errors and other non-transient responses are not retried.
 
 ### Chromium sandboxing for CLI renderers
 
